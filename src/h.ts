@@ -24,7 +24,7 @@ const some = <T>(x: T | boolean | null | undefined): x is T =>
   x != null && x !== true && x !== false
 
 const flat = (arr: FreNode[], target: Fiber[] = []) => {
-  arr.forEach((v) => {
+  arr.forEach(v => {
     isArr(v)
       ? flat(v, target)
       : some(v) && target.push(isStr(v) ? createText(v) : v)
@@ -59,13 +59,15 @@ export function lazy(factory) {
   let result
   let promise
 
-  const LazyComponent = (props) => {
+  const LazyComponent = props => {
     switch (status) {
-      case 'loaded': return h(result, props)
-      case 'loading': throw promise
+      case 'loaded':
+        return h(result, props)
+      case 'loading':
+        throw promise
       default:
         status = 'loading'
-        promise = factory().then((m) => {
+        promise = factory().then(m => {
           status = 'loaded'
           result = m.default
         })
@@ -75,7 +77,15 @@ export function lazy(factory) {
   return LazyComponent
 }
 
-export function Suspense(props){
+export function Suspense(props) {
   return props.children
 }
 
+export function ErrorBoundary(props) {
+  return props.children
+  // try {
+  //   return props.children
+  // } catch (e) {
+  //   return props.fallback({ error: e })
+  // }
+}

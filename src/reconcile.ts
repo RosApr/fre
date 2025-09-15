@@ -10,7 +10,7 @@ import {
 import { createElement } from './dom'
 import { resetCursor } from './hook'
 import { schedule, shouldYield } from './schedule'
-import { isArr, createText, Suspense } from './h'
+import { isArr, createText, Suspense, ErrorBoundary } from './h'
 import { commit, removeElement } from './commit'
 
 let currentFiber: Fiber = null
@@ -46,14 +46,45 @@ export const getBoundary = (fiber, name) => {
   }
   return null
 }
-
-const suspense = (fiber, promise) => {
-  const boundary = getBoundary(fiber, Suspense)
-  if (!boundary) throw promise
-  boundary.kids = []
-  reconcileChidren(boundary, simpleVnode(boundary.props.fallback))
-  promise.then(() => update(boundary))
-  return boundary
+const errorBoundaryUpdate = (fiber, error) => {
+  const errorBoundary = getBoundary(fiber, ErrorBoundary)
+  if (!fiber.error) {
+    fiber.error = error
+  }
+  const errorSubComIndex = errorBoundary.kids.findIndex(
+    k => k.type === fiber.type
+  )
+  const kidsClone = [...errorBoundary.kids]
+  kidsClone.splice(
+    errorSubComIndex,
+    1,
+    simpleVnode(
+      isFn(errorBoundary.props.fallback)
+        ? errorBoundary.props.fallback({ error })
+        : errorBoundary.props.fallback
+    )
+  )
+  reconcileChidren(errorBoundary, kidsClone)
+  return errorBoundary
+}
+const suspenseUpdate = (fiber, promise) => {
+  const suspenseBoundary = getBoundary(fiber, Suspense)
+  if (!suspenseBoundary) throw promise
+  suspenseBoundary.kids = []
+  reconcileChidren(
+    suspenseBoundary,
+    simpleVnode(suspenseBoundary.props.fallback)
+  )
+  promise.then(
+    () => update(suspenseBoundary),
+    err => {
+      const errorBoundary = getBoundary(fiber, ErrorBoundary)
+      if (!errorBoundary) throw err
+      suspenseBoundary.error = err
+      return update(errorBoundary)
+    }
+  )
+  return suspenseBoundary
 }
 
 const capture = (fiber: Fiber) => {
@@ -65,11 +96,16 @@ const capture = (fiber: Fiber) => {
       return sibling(fiber)
     }
     try {
+      if (fiber.error) {
+        throw fiber.error
+      }
       updateHook(fiber)
     } catch (e) {
       if (e instanceof Promise) {
-        return suspense(fiber, e).child
-      } else throw e
+        return suspenseUpdate(fiber, e).child
+      } else {
+        return errorBoundaryUpdate(fiber, e).child
+      }
     }
   } else {
     updateHost(fiber as FiberHost)
@@ -138,7 +174,6 @@ const updateHook = (fiber: Fiber) => {
 }
 
 const updateHost = (fiber: FiberHost) => {
-
   if (!fiber.node) {
     if (fiber.type === 'svg') fiber.lane |= TAG.SVG
     fiber.node = createElement(fiber)
@@ -186,8 +221,8 @@ export const arrayfy = <T>(arr: T | T[] | null | undefined) =>
   !arr ? [] : isArr(arr) ? arr : [arr]
 
 const side = (effects?: HookEffect[]) => {
-  effects.forEach((e) => e[2] && e[2]())
-  effects.forEach((e) => (e[2] = e[0]()))
+  effects.forEach(e => e[2] && e[2]())
+  effects.forEach(e => (e[2] = e[0]()))
   effects.length = 0
 }
 
@@ -197,7 +232,7 @@ const diff = (aCh: Fiber[], bCh: Fiber[]) => {
     aTail = aCh.length - 1,
     bTail = bCh.length - 1,
     bMap = {},
-    same = (a: Fiber, b: Fiber) => (a.type === b.type && a.key === b.key),
+    same = (a: Fiber, b: Fiber) => a.type === b.type && a.key === b.key,
     temp = [],
     actions = []
 
@@ -222,7 +257,8 @@ const diff = (aCh: Fiber[], bCh: Fiber[]) => {
   }
 
   while (aHead <= aTail || bHead <= bTail) {
-    const aElm = aCh[aHead], bElm = bCh[bHead]
+    const aElm = aCh[aHead],
+      bElm = bCh[bHead]
     if (aElm === null) {
       aHead++
     } else if (bTail + 1 <= bHead) {
@@ -263,7 +299,7 @@ const diff = (aCh: Fiber[], bCh: Fiber[]) => {
 }
 
 export const useFiber = () => currentFiber || null
-export const resetFiber = (fiber: Fiber) => currentFiber = fiber
+export const resetFiber = (fiber: Fiber) => (currentFiber = fiber)
 export const isFn = (x: unknown): x is Function => typeof x === 'function'
 export const isStr = (s: unknown): s is number | string =>
   typeof s === 'number' || typeof s === 'string'
