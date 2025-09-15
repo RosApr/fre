@@ -10,7 +10,7 @@ import {
 import { createElement } from './dom'
 import { resetCursor } from './hook'
 import { schedule, shouldYield } from './schedule'
-import { isArr, createText, Suspense } from './h'
+import { isArr, createText, Suspense, ErrorBoundary } from './h'
 import { commit, removeElement } from './commit'
 
 let currentFiber: Fiber = null
@@ -46,13 +46,21 @@ export const getBoundary = (fiber, name) => {
   }
   return null
 }
-
+const errorBoundary = (fiber, error) => {
+  const boundary = getBoundary(fiber, ErrorBoundary)
+  if (!boundary) throw error
+  reconcileChidren(boundary, simpleVnode(boundary.props.fallback))
+  return boundary
+}
 const suspense = (fiber, promise) => {
   const boundary = getBoundary(fiber, Suspense)
   if (!boundary) throw promise
   boundary.kids = []
   reconcileChidren(boundary, simpleVnode(boundary.props.fallback))
-  promise.then(() => update(boundary))
+  promise.then(() => update(boundary), (err) => {
+    fiber.error = err
+    return update(errorBoundary(boundary, err))
+  })
   return boundary
 }
 
@@ -65,11 +73,16 @@ const capture = (fiber: Fiber) => {
       return sibling(fiber)
     }
     try {
+      if (fiber.error) {
+        throw fiber.error
+      }
       updateHook(fiber)
     } catch (e) {
       if (e instanceof Promise) {
         return suspense(fiber, e).child
-      } else throw e
+      } else {
+        return errorBoundary(fiber, e).child
+      }
     }
   } else {
     updateHost(fiber as FiberHost)
